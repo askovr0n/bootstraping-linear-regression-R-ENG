@@ -1,0 +1,142 @@
+---
+title: "Bootstrap Simulation AS"
+author: "Artur Skowroński"
+date: "02 01 2022"
+output: html_document
+---
+
+## Introduction
+
+During an Advanced Microeconomics class, our professor announced a contest: "use bootstrapping and clustering methods to achieve better fitting linear regression than was applied on the code given during the lesson". That's why, I decided to take up the challenge.
+
+In my solution, I decided to divide the dataset into clusters through Kmeans method. Then, in each cluster I used bootstrapping method to estimate the linear regression parameters. This way, each cluster had its own results, which at the end were averaged, in order to get one unique parameters of the regression line.
+
+#### Importing libraries and data
+```{r libraries, message = FALSE, warning = FALSE}
+
+requiredPackages = c( "car", "readr", "factoextra")
+for(i in requiredPackages){if(!require(i,character.only = TRUE)) library(i,character.only = TRUE)}
+
+sample_all <- read_delim("sample_all.csv", ";", escape_double = FALSE, trim_ws = TRUE)
+head(sample_all)
+```
+
+```{r summary_base}
+
+summary(sample_all[,1:2])
+
+```
+Let's see if it makes any sense to scale the data.
+
+``` {r simple_histogram}
+
+x <- sample_all$x
+h <- hist(x,
+          main = "Basic Histogram",
+          xlab = "Samples")
+xfit<-seq(min(x), max(x), length=40)
+yfit<-dnorm(xfit, mean=mean(x), sd=sd(x))
+yfit <- yfit*diff(h$mids[1:2])*length(x)
+lines(xfit, yfit, col="blue", lwd=2)
+# Based on the histogram, there is no reason to scale the data
+```
+
+**Basic regression**
+
+```{r base_regression}
+
+require(stats)
+base_lr<-lm(y ~ x, data = sample_all)
+coeff <- coefficients(base_lr)
+# equation of the line : 
+eq <- paste0("y = ", round(coeff[2],1), "x +", round(coeff[1],1))
+# plot
+plot(sample_all, main=eq, col = "blue")
+abline(base_lr, col="red")
+
+coeff
+
+```
+
+**Summary of regression**.
+
+```{r base regression summary}
+
+summary(base_lr) # R^2 = 0.8793
+
+```
+
+## Kmeans
+
+Now I will split my data using Kmeans method into some number of clusters. 
+
+```{r optimal_number_of_clusters}
+(opt_kmeans_sill <- fviz_nbclust(sample_all, FUNcluster = kmeans, method = "silhouette") +
+  labs(subtitle = "Silhouette method with K-means"))
+
+```
+
+```{r clustering}
+
+clustering_info<- eclust(sample_all, FUNcluster = "kmeans", k=2, hc_metric = 'euclidean', graph = FALSE)
+(clustering_kmeans_chart_plot <- fviz_cluster(clustering_info, geom = c("point")))
+
+```
+
+Each observation in my dataset will be given the number of its cluster. Then, I will split the dataset into two other datasets by the number of its cluster.
+
+```{r add_clusters into dataset}
+sample_all$Clusters <- clustering_info$cluster
+head(sample_all)
+```
+```{r split_data}
+df_clusters <- split(sample_all, sample_all$Clusters)
+```
+
+## Bootstrap
+
+The last step is to prepare a boostrap in each of 2 clusters and then average their regression parameters. In the task, it is suggested to loop 100000 times.
+
+```{r bootstrap}
+
+final_calculation <- function(df, boot){
+    
+  sample_b_ind  <-0
+  alfa_b <-0
+  beta_b <-0
+  bootstrap_linear_list <- list()
+  mean_alfa <- 0
+  mean_beta <- 0
+    
+  for (i in 1:length(df)){  
+    for(j in 1:boot){
+      sample_b_ind <-sample(1:nrow(df[[i]]), nrow(df[[i]]), replace=TRUE) #label draw
+      sample_b <- df[[i]][sample_b_ind, ] 
+      mnk_b <- lm(sample_b$y~sample_b$x)
+        
+      alfa_b[j] <- summary(mnk_b)$coefficients[,1][1]  
+      beta_b[j] <- summary(mnk_b)$coefficients[,1][2]  
+        
+      name <- paste('cluster:', i, sep="")
+      temp <- list(alfa = alfa_b, beta = beta_b)
+      bootstrap_linear_list[[name]] <- temp
+      }
+    }
+  
+  # Averaging of parameters 
+  mean_alfa <- (mean(bootstrap_linear_list[[1]]$alfa) + mean(bootstrap_linear_list[[2]]$alfa))/2
+  mean_beta <- (mean(bootstrap_linear_list[[1]]$beta) + mean(bootstrap_linear_list[[2]]$beta))/2
+  
+  # Final result
+  new_linear <- c("alfa" = mean_alfa, "beta" = mean_beta)
+  return(new_linear)
+}
+  
+```
+
+```{r results}
+
+print(paste("Based on my analysis, the alpha parameter equals: ", final_calculation(df_clusters, 100000)[1]))
+print(paste("Based on my analysis, the beta parameter equals: ", final_calculation(df_clusters, 100000)[2]))
+
+```
